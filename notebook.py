@@ -1693,6 +1693,49 @@ def _(mo):
 
 @app.cell
 def _(mo, model_picker, os, show_all):
+    import subprocess
+
+    _all = [
+        "gpt2_paper_metrics.png", "bert_paper_metrics.png",
+        "vit_paper_metrics.png", "dit_paper_metrics.png",
+        "phi_paper_metrics.png", "phi2_paper_metrics.png",
+        "pythia_paper_metrics.png", "gemma2b_paper_metrics.png",
+        "qwen2_vl_lm_paper_metrics.png", "qwen_paper_metrics.png",
+        "llama3_2_1b_paper_metrics.png", "qwen2_5_0_5b_paper_metrics.png",
+        "smollm2_360m_paper_metrics.png",
+    ]
+    _github_raw_base = "https://raw.githubusercontent.com/grasgor/xsa-marimo/main/outputs"
+
+    def _existing_count(_dir, _names):
+        if not os.path.isdir(_dir):
+            return 0
+        return sum(1 for _n in _names if os.path.isfile(os.path.join(_dir, _n)))
+
+    def _download_missing(_target_dir, _missing):
+        os.makedirs(_target_dir, exist_ok=True)
+        downloaded, failed = [], []
+        for _name in _missing:
+            _dst = os.path.join(_target_dir, _name)
+            _url = f"{_github_raw_base}/{_name}"
+            try:
+                _proc = subprocess.run(
+                    ["curl", "-LfsS", "--max-time", "20", "-o", _dst, _url],
+                    capture_output=True, text=True, check=False,
+                )
+            except Exception:
+                failed.append(_name)
+                continue
+            if _proc.returncode == 0 and os.path.isfile(_dst) and os.path.getsize(_dst) > 0:
+                downloaded.append(_name)
+            else:
+                try:
+                    if os.path.isfile(_dst):
+                        os.remove(_dst)
+                except OSError:
+                    pass
+                failed.append(_name)
+        return downloaded, failed
+
     _candidates = []
     if "__file__" in globals():
         _here = os.path.dirname(os.path.abspath(__file__))
@@ -1701,18 +1744,40 @@ def _(mo, model_picker, os, show_all):
         os.path.join(".", "outputs"),
         os.path.join(".", "paper_metric_plot", "outputs"),
     ])
-    _plot_dir = next((p for p in _candidates if os.path.isdir(p)), _candidates[0])
+
+    _plot_dir = _candidates[0]
+    _best = -1
+    for _cand in _candidates:
+        _cnt = _existing_count(_cand, _all)
+        if _cnt > _best:
+            _best = _cnt
+            _plot_dir = _cand
+
+    _boot_msg = None
+    _missing_any = [_n for _n in _all if not os.path.isfile(os.path.join(_plot_dir, _n))]
+    if _missing_any:
+        _target_dir = os.path.join(".", "outputs")
+        _downloaded, _failed = _download_missing(_target_dir, _missing_any)
+        if _existing_count(_target_dir, _all) >= _existing_count(_plot_dir, _all):
+            _plot_dir = _target_dir
+        if _downloaded:
+            _boot_msg = mo.callout(
+                mo.md(
+                    f"Fetched `{len(_downloaded)}` missing plot image(s) from GitHub into "
+                    f"`{_target_dir}`."
+                ),
+                kind="success",
+            )
+        elif _failed:
+            _boot_msg = mo.callout(
+                mo.md(
+                    "Could not auto-download missing plot images from GitHub "
+                    "(network may be unavailable in this runtime)."
+                ),
+                kind="warn",
+            )
 
     if show_all.value:
-        _all = [
-            "gpt2_paper_metrics.png", "bert_paper_metrics.png",
-            "vit_paper_metrics.png", "dit_paper_metrics.png",
-            "phi_paper_metrics.png", "phi2_paper_metrics.png",
-            "pythia_paper_metrics.png", "gemma2b_paper_metrics.png",
-            "qwen2_vl_lm_paper_metrics.png", "qwen_paper_metrics.png",
-            "llama3_2_1b_paper_metrics.png", "qwen2_5_0_5b_paper_metrics.png",
-            "smollm2_360m_paper_metrics.png",
-        ]
         _items = []
         for _name in _all:
             _path = os.path.join(_plot_dir, _name)
@@ -1720,16 +1785,17 @@ def _(mo, model_picker, os, show_all):
                 _items.append(mo.image(src=_path, width="100%"))
             else:
                 _items.append(mo.md(f"*missing: {_name}*"))
-        gallery = mo.vstack(_items, gap=0.2)
+        _main = mo.vstack(_items, gap=0.2)
     else:
         _path = os.path.join(_plot_dir, model_picker.value)
         if os.path.isfile(_path):
-            gallery = mo.image(src=_path, width="100%")
+            _main = mo.image(src=_path, width="100%")
         else:
-            gallery = mo.md(
-                f"**Missing image**: `{_path}`. "
-                f"Expected an `outputs/` folder next to the notebook."
+            _main = mo.md(
+                f"**Missing image**: `{_path}`.\n\n"
+                "Expected `outputs/*.png` in the working directory, or reachable GitHub raw URLs."
             )
+    gallery = mo.vstack([_boot_msg, _main]) if _boot_msg is not None else _main
     gallery
     return (gallery,)
 
